@@ -8,23 +8,36 @@ import { CCDIKSolver, CCDIKHelper } from 'three/examples/jsm/animation/CCDIKSolv
 extend({ TransformControls })
 
 function IKScene({ orbitControlsRef }) {
-  const fbx = useFBX('/all_1.fbx') // Ensure the path is correct and the model is accessible
+  const fbx = useFBX('/all_test2.fbx') // Path to your FBX
   const [skinnedMesh, setSkinnedMesh] = useState(null)
   const [iksConfig, setIksConfig] = useState([])
+
   const ikSolverRef = useRef(null)
   const ikHelperRef = useRef(null)
-  const targetRef = useRef(new THREE.Bone())
+
+  // The "handle" mesh ref
+  const handleMeshRef = useRef(null)
+
+  // We'll track the real effector bone ("right_thumb3") so we can move it each frame
+  const effectorBoneRef = useRef(null)
+
   const transformControlsRef = useRef(null)
+  const { scene } = useThree()
 
-  const { scene, gl } = useThree()
-
-  // Step 1: Find the SkinnedMesh within the FBX
+  // ---------------------------
+  // Step 1: Find the SkinnedMesh + the "handler_right_thumb2_bone" mesh
+  // ---------------------------
   useEffect(() => {
     let foundSkinnedMesh = null
+
     fbx.traverse((child) => {
       if (child.isSkinnedMesh) {
         foundSkinnedMesh = child
         console.log('Found SkinnedMesh:', child.name)
+      }
+      // If we find the mesh named "handler_right_thumb2_bone"
+      if (child.name === 'handler_right_thumb3') {
+        console.log('Found the handler:', child.name, child.type)
       }
     })
 
@@ -35,114 +48,78 @@ function IKScene({ orbitControlsRef }) {
     }
   }, [fbx])
 
-  // Step 2: Log Bone Names and Indices for Debugging
+  // ---------------------------
+  // Step 2: Log Skeleton Bones
+  // ---------------------------
   useEffect(() => {
     if (skinnedMesh) {
+      const skeleton = skinnedMesh.skeleton
       console.log('SkinnedMesh:', skinnedMesh.name)
-      if (skinnedMesh.skeleton && skinnedMesh.skeleton.getBoneByName) {
-        console.log('getBoneByName is available.')
-      } else {
-        console.error('getBoneByName is NOT available on skinnedMesh.skeleton.')
-      }
-
-      // Log all bone names and their indices
-      skinnedMesh.skeleton.bones.forEach((bone, index) => {
-        console.log(`Bone ${index}: ${bone.name}, isBone=${bone.isBone}, parent=${bone.parent?.name}`)
+      console.log('Skeleton has bones:', skeleton.bones.length)
+      skeleton.bones.forEach((bone, index) => {
+        console.log(`Bone ${index}: ${bone.name} (parent: ${bone.parent?.name})`)
+        if (bone.name === "handler_right_thumb3") {
+          console.log("****Found it!", bone)
+        }
       })
     }
   }, [skinnedMesh])
 
-  // Step 3: Create and Position the IK Target for Right Thumb
+  // ---------------------------
+  // Step 3: Identify the effector bone = "right_thumb3"
+  // ---------------------------
   useEffect(() => {
     if (!skinnedMesh) return
-
-    console.log('[IK Target Setup] Starting...')
-
-    const targetBone = targetRef.current
-    targetBone.name = 'IKTarget_RightThumb'
-
-    // 1) Log the skeleton before changes
-    console.log(
-      '[IK Target Setup] Skeleton bones BEFORE adding target:',
-      skinnedMesh.skeleton.bones.map((b) => b.name)
-    )
-
-    // 3) Find root bone
-    let rootBone = skinnedMesh.skeleton.getBoneByName('root')
-    if (rootBone) {
-      console.log(`[IK Target Setup] "root" bone found: ${rootBone.name}`)
-    } else {
-      console.warn('[IK Target Setup] "root" bone not found, fallback to skeleton.bones[0]')
-      rootBone = skinnedMesh.skeleton.bones[0]
+    const handler = skinnedMesh.skeleton.getBoneByName('handler_right_thumb3')       
+    const bone = skinnedMesh.skeleton.getBoneByName('right_thumb3')
+    if (!bone) {
+      console.error('No bone named "right_thumb3" found in skeleton.')
+      return
     }
-
-    // 2) Get thumb tip
-    const thumbTip = skinnedMesh.skeleton.getBoneByName('right_thumb3')
-    if (thumbTip) {
-      const thumbTipPos = new THREE.Vector3()
-      thumbTip.getWorldPosition(thumbTipPos) // <--- You need this
-      rootBone.worldToLocal(thumbTipPos) // convert world -> local
-      targetBone.position.copy(thumbTipPos)
-      console.log(`[IK Target Setup] Found "right_thumb3". Positioning targetBone at ${thumbTipPos.toArray()}`)
-      console.log('right_thumb3 parent is:', thumbTip.parent?.name)
-    } else {
-      console.warn('[IK Target Setup] No bone named "right_thumb3". Check your bone names.')
-    }
-
-    // 4) Add the new target bone as a child of the root bone
-    console.log(`[IK Target Setup] Parenting targetBone to "${rootBone.name}"`)
-    rootBone.add(targetBone)
-
-    // 5) Insert bone into skeleton
-    console.log('[IK Target Setup] Pushing targetBone into skeleton.bones array...')
-    skinnedMesh.skeleton.bones.push(targetBone)
-
-    // 6) Recalc the skeleton's inverse matrices
-    console.log('[IK Target Setup] Recalculating skeleton inverses...')
-    skinnedMesh.skeleton.calculateInverses()
-
-    // 7) Re-bind the mesh to the updated skeleton
-    console.log('[IK Target Setup] Re-binding skinnedMesh to new skeleton...')
-    skinnedMesh.bind(skinnedMesh.skeleton)
-
-    // Final logs
-    console.log(
-      '[IK Target Setup] Skeleton bones AFTER adding target:',
-      skinnedMesh.skeleton.bones.map((b) => b.name)
-    )
+    effectorBoneRef.current = bone
+    handleMeshRef.current = handler
+    console.log('Effector bone is "right_thumb3". Parent:', bone.parent?.name)
   }, [skinnedMesh])
 
-  // Step 4: Define IK Configuration Based on Bone Indices for Right Thumb
+  // ---------------------------
+  // Step 4: Define IK config with NO "target:" field
+  //          (We do partial approach: effector = thumb3, links = [thumb2, thumb1])
+  // ---------------------------
   useEffect(() => {
-    if (!skinnedMesh || !targetRef.current) return
+    if (!skinnedMesh || !effectorBoneRef.current) return
 
-    const effectorIndex = skinnedMesh.skeleton.bones.findIndex((b) => b.name === 'right_thumb3')
-    const link1Index = skinnedMesh.skeleton.bones.findIndex((b) => b.name === 'right_thumb2')
-    const link2Index = skinnedMesh.skeleton.bones.findIndex((b) => b.name === 'right_thumb1')
+    const skeleton = skinnedMesh.skeleton
+    const targetIndex = skeleton.bones.findIndex((b) => b.name === 'handler_right_thumb3')
+    const effectorIndex = skeleton.bones.findIndex((b) => b.name === 'right_thumb3')
+    const link1Index    = skeleton.bones.findIndex((b) => b.name === 'right_thumb2')
+    const link2Index    = skeleton.bones.findIndex((b) => b.name === 'right_thumb1')
+
+    console.log(targetIndex)
 
     if (effectorIndex < 0 || link1Index < 0 || link2Index < 0) {
-      console.error('Some thumb bones not found. Check names.')
+      console.error('Could not find "right_thumb3", "right_thumb2", or "right_thumb1" in skeleton.')
       return
     }
 
-    const targetIndex = skinnedMesh.skeleton.bones.length - 1 // last one we just pushed
-
-    // One simple chain: (target) -> effector (thumb3) -> link(thumb2) -> link(thumb1)
+    // No "target", just effector + links
     const iks = [
       {
         target: targetIndex,
         effector: effectorIndex,
         links: [
-          { index: link1Index }, // right_thumb2
-          { index: link2Index } // right_thumb1
+          { index: link1Index },
+          { index: link2Index }
         ]
       }
     ]
 
     setIksConfig(iks)
+    console.log('Partial IK config (no target):', iks)
   }, [skinnedMesh])
 
-  // Step 5: Initialize IK Solver and Helper
+  // ---------------------------
+  // Step 5: Initialize IK Solver & Helper
+  // ---------------------------
   useEffect(() => {
     if (skinnedMesh && iksConfig.length > 0) {
       ikSolverRef.current = new CCDIKSolver(skinnedMesh, iksConfig)
@@ -151,28 +128,43 @@ function IKScene({ orbitControlsRef }) {
     }
     return () => {
       if (ikHelperRef.current) {
+        scene.remove(ikHelperRef.current)
         ikHelperRef.current.dispose()
         ikHelperRef.current = null
       }
     }
   }, [skinnedMesh, iksConfig, scene])
 
-  // 6) Animate: update solver
+  // ---------------------------
+  // Step 6: useFrame => copy "handleMesh" pos -> effectorBone pos, then solver.update()
+  // ---------------------------
   useFrame(() => {
-    console.log('Frame start: about to call IK solver update...')
-    if (ikSolverRef.current) {
+    if (effectorBoneRef.current && handleMeshRef.current && ikSolverRef.current) {
+      // 1) Grab the handle's world position
+      const handlePos = new THREE.Vector3()
+      handleMeshRef.current.getWorldPosition(handlePos)
+
+      // 2) Convert to effectorBone's parent local space
+      if (effectorBoneRef.current.parent) {
+        effectorBoneRef.current.parent.worldToLocal(handlePos)
+      }
+
+      // 3) Move the effector bone to that local position
+      effectorBoneRef.current.position.copy(handlePos)
+
+      // 4) Now solver updates the chain (thumb2, thumb1)
       ikSolverRef.current.update()
     }
-    console.log('Frame end: solver update ok.')
   })
 
-  // Step 7: Manage TransformControls and OrbitControls Interaction
+  // ---------------------------
+  // Step 7: <TransformControls> on the "handleMesh" (a normal mesh in the scene)
+  // ---------------------------
   const onDragStart = () => {
     if (orbitControlsRef.current) {
       orbitControlsRef.current.enabled = false
     }
   }
-
   const onDragEnd = () => {
     if (orbitControlsRef.current) {
       orbitControlsRef.current.enabled = true
@@ -182,14 +174,21 @@ function IKScene({ orbitControlsRef }) {
   return (
     <>
       <primitive object={fbx} scale={0.1} />
-      <TransformControls
-        object={targetRef.current}
-        mode="translate"
-        ref={transformControlsRef}
-        size={0.5}
-        onMouseDown={onDragStart}
-        onMouseUp={onDragEnd}
-      />
+      {/* 
+        We attach transform controls to the "handler_right_thumb2_bone" mesh. 
+        Because it's presumably parented under the FBX group (which is in the scene),
+        we won't get "must be part of scene graph" error.
+      */}
+      {handleMeshRef.current && (
+        <TransformControls
+          object={handleMeshRef.current}
+          mode="translate"
+          ref={transformControlsRef}
+          size={0.5}
+          onMouseDown={onDragStart}
+          onMouseUp={onDragEnd}
+        />
+      )}
     </>
   )
 }
@@ -203,12 +202,19 @@ export default function App() {
       onCreated={({ scene }) => {
         scene.background = new THREE.Color(0xffffff)
         scene.fog = new THREE.FogExp2(0xffffff, 0.05)
-      }}>
+      }}
+    >
       <ambientLight intensity={0.2} />
       <Suspense fallback={null}>
         <IKScene orbitControlsRef={orbitControlsRef} />
       </Suspense>
-      <OrbitControls ref={orbitControlsRef} makeDefault minDistance={1} maxDistance={50} enableDamping />
+      <OrbitControls
+        ref={orbitControlsRef}
+        makeDefault
+        minDistance={1}
+        maxDistance={50}
+        enableDamping
+      />
     </Canvas>
   )
 }
