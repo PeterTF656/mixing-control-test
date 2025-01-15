@@ -8,7 +8,7 @@ import { CCDIKSolver, CCDIKHelper } from 'three/examples/jsm/animation/CCDIKSolv
 extend({ TransformControls })
 
 function IKScene({ orbitControlsRef }) {
-  const fbx = useFBX('/all_test2.fbx') // Path to your FBX
+  const fbx = useFBX('/handler_left_wrist.fbx') // Path to your FBX
   const [skinnedMesh, setSkinnedMesh] = useState(null)
   const [iksConfig, setIksConfig] = useState([])
 
@@ -31,12 +31,13 @@ function IKScene({ orbitControlsRef }) {
     let foundSkinnedMesh = null
 
     fbx.traverse((child) => {
+      console.log("showing fbx children",child)
       if (child.isSkinnedMesh) {
         foundSkinnedMesh = child
         console.log('Found SkinnedMesh:', child.name)
       }
       // If we find the mesh named "handler_right_thumb2_bone"
-      if (child.name === 'handler_right_thumb3') {
+      if (child.name === 'handler_left_wrist') {
         console.log('Found the handler:', child.name, child.type)
       }
     })
@@ -58,7 +59,7 @@ function IKScene({ orbitControlsRef }) {
       console.log('Skeleton has bones:', skeleton.bones.length)
       skeleton.bones.forEach((bone, index) => {
         console.log(`Bone ${index}: ${bone.name} (parent: ${bone.parent?.name})`)
-        if (bone.name === "handler_right_thumb3") {
+        if (bone.name === "handler_left_wrist") {
           console.log("****Found it!", bone)
         }
       })
@@ -70,7 +71,7 @@ function IKScene({ orbitControlsRef }) {
   // ---------------------------
   useEffect(() => {
     if (!skinnedMesh) return
-    const handler = skinnedMesh.skeleton.getBoneByName('handler_right_thumb3')       
+    const handler = skinnedMesh.skeleton.getBoneByName('handler_left_wrist')       
     const bone = skinnedMesh.skeleton.getBoneByName('right_thumb3')
     if (!bone) {
       console.error('No bone named "right_thumb3" found in skeleton.')
@@ -89,7 +90,7 @@ function IKScene({ orbitControlsRef }) {
     if (!skinnedMesh || !effectorBoneRef.current) return
 
     const skeleton = skinnedMesh.skeleton
-    const targetIndex = skeleton.bones.findIndex((b) => b.name === 'handler_right_thumb3')
+    const targetIndex = skeleton.bones.findIndex((b) => b.name === 'handler_left_wrist')
     const effectorIndex = skeleton.bones.findIndex((b) => b.name === 'right_thumb3')
     const link1Index    = skeleton.bones.findIndex((b) => b.name === 'right_thumb2')
     const link2Index    = skeleton.bones.findIndex((b) => b.name === 'right_thumb1')
@@ -107,8 +108,19 @@ function IKScene({ orbitControlsRef }) {
         target: targetIndex,
         effector: effectorIndex,
         links: [
-          { index: link1Index },
-          { index: link2Index }
+          { index: link1Index, 
+            rotationMin: new THREE.Vector3( 1.2, - 1.8, - .4 ),
+            rotationMax: new THREE.Vector3( 1.7, - 1.1, .3 )
+          },
+          { index: link2Index, 
+            rotationMin: new THREE.Vector3( 1.2, - 1.8, - .4 ),
+            rotationMax: new THREE.Vector3( 1.7, - 1.1, .3 )
+          },
+          // { index: targetIndex,
+
+          //   rotationMin: new THREE.Vector3( 0, - 0, - 0 ),
+          //   rotationMax: new THREE.Vector3( 1.7, - 1.1, .3 )
+          // }
         ]
       }
     ]
