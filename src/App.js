@@ -1,8 +1,11 @@
 import React, { useRef, useState, useEffect, Suspense } from 'react'
 import { Canvas, useFrame, extend, useThree } from '@react-three/fiber'
-import { OrbitControls, TransformControls, useFBX } from '@react-three/drei'
+import { Box, OrbitControls, TransformControls, useFBX } from '@react-three/drei'
 import * as THREE from 'three'
 import { CCDIKSolver, CCDIKHelper } from 'three/examples/jsm/animation/CCDIKSolver'
+
+const SMPLX_JOINT_NAMES = [   'pelvis','left_hip','right_hip','spine1','left_knee','right_knee','spine2','left_ankle','right_ankle','spine3', 'left_foot','right_foot','neck','left_collar','right_collar','head','left_shoulder','right_shoulder','left_elbow', 'right_elbow','left_wrist','right_wrist',
+  'jaw','left_eye_smplhf','right_eye_smplhf','left_index1','left_index2','left_index3','left_middle1','left_middle2','left_middle3','left_pinky1','left_pinky2','left_pinky3','left_ring1','left_ring2','left_ring3','left_thumb1','left_thumb2','left_thumb3','right_index1','right_index2','right_index3','right_middle1','right_middle2','right_middle3','right_pinky1','right_pinky2','right_pinky3','right_ring1','right_ring2','right_ring3','right_thumb1','right_thumb2','right_thumb3']
 
 // Extend TransformControls to use events in R3F
 extend({ TransformControls })
@@ -14,6 +17,8 @@ function IKScene({ orbitControlsRef }) {
 
   const ikSolverRef = useRef(null)
   const ikHelperRef = useRef(null)
+
+  const prevPositionRef = useRef(new THREE.Vector3());
 
   // The "handle" mesh ref
   const handleMeshRef = useRef(null)
@@ -72,7 +77,7 @@ function IKScene({ orbitControlsRef }) {
   useEffect(() => {
     if (!skinnedMesh) return
     const handler = skinnedMesh.skeleton.getBoneByName('handler_left_wrist')       
-    const bone = skinnedMesh.skeleton.getBoneByName('right_thumb3')
+    const bone = skinnedMesh.skeleton.getBoneByName('left_wrist')
     if (!bone) {
       console.error('No bone named "right_thumb3" found in skeleton.')
       return
@@ -91,9 +96,11 @@ function IKScene({ orbitControlsRef }) {
 
     const skeleton = skinnedMesh.skeleton
     const targetIndex = skeleton.bones.findIndex((b) => b.name === 'handler_left_wrist')
-    const effectorIndex = skeleton.bones.findIndex((b) => b.name === 'right_thumb3')
-    const link1Index    = skeleton.bones.findIndex((b) => b.name === 'right_thumb2')
-    const link2Index    = skeleton.bones.findIndex((b) => b.name === 'right_thumb1')
+
+    const effectorIndex = skeleton.bones.findIndex((b) => b.name === 'left_wrist')
+    const link0Index    = skeleton.bones.findIndex((b) => b.name === 'left_elbow')
+    const link1Index    = skeleton.bones.findIndex((b) => b.name === 'left_shoulder')
+    const link2Index    = skeleton.bones.findIndex((b) => b.name === 'left_collar')
 
     console.log(targetIndex)
 
@@ -107,8 +114,16 @@ function IKScene({ orbitControlsRef }) {
       {
         target: targetIndex,
         effector: effectorIndex,
+        // target: effectorIndex,
+        // effector: link1Index,
         links: [
-          { index: link1Index, 
+          {
+            index: link0Index, 
+            rotationMin: new THREE.Vector3( 1.2, - 1.8, - .4 ),
+            rotationMax: new THREE.Vector3( 1.7, - 1.1, .3 )
+          },
+          { 
+            index: link1Index, 
             rotationMin: new THREE.Vector3( 1.2, - 1.8, - .4 ),
             rotationMax: new THREE.Vector3( 1.7, - 1.1, .3 )
           },
@@ -151,23 +166,58 @@ function IKScene({ orbitControlsRef }) {
   // Step 6: useFrame => copy "handleMesh" pos -> effectorBone pos, then solver.update()
   // ---------------------------
   useFrame(() => {
-    if (effectorBoneRef.current && handleMeshRef.current && ikSolverRef.current) {
-      // 1) Grab the handle's world position
-      const handlePos = new THREE.Vector3()
-      handleMeshRef.current.getWorldPosition(handlePos)
+    if (
+      effectorBoneRef.current &&
+      handleMeshRef.current &&
+      ikSolverRef.current &&
+      handleMeshRef.current.position
+    ) {
+      const currentPosition = handleMeshRef.current.position.clone();
+  
+      // Check if the position has changed
+      if (!currentPosition.equals(prevPositionRef.current)) {
+        const skeleton = skinnedMesh.skeleton;
+        const targetIndex = skeleton.bones.findIndex((b) => b.name === 'handler_left_wrist');
+        const targetBone = skeleton.bones[targetIndex];
+  
+        if (targetBone) {
+          // Update the target bone's position
+          targetBone.position.copy(currentPosition);
+          targetBone.updateMatrixWorld();
+        }
+  
+        // Update the IK solver
+        ikSolverRef.current.update();
+  
+        // Update bounding spheres for the skinned mesh
+        scene.traverse((object) => {
+          if (object.isSkinnedMesh) object.computeBoundingSphere();
+        });
+  
+        // Store the current position for the next comparison
+        prevPositionRef.current.copy(currentPosition);
 
-      // 2) Convert to effectorBone's parent local space
-      if (effectorBoneRef.current.parent) {
-        effectorBoneRef.current.parent.worldToLocal(handlePos)
+        const q_list = []
+        const v_list = []
+
+        SMPLX_JOINT_NAMES.forEach((bone)=>{
+          const targetIndex = skeleton.bones.findIndex((b) => b.name === bone);
+          const targetBone = skeleton.bones[targetIndex];
+          if (targetBone) {
+            q_list.push(targetBone.quaternion
+            )
+            v_list.push(targetBone.position)
+          }
+          else console.log("\n---\n\nMatching ERROR\n\n")
+        })
+
+        console.log({
+          q_list: q_list,
+          v_list: v_list
+        })
       }
-
-      // 3) Move the effector bone to that local position
-      effectorBoneRef.current.position.copy(handlePos)
-
-      // 4) Now solver updates the chain (thumb2, thumb1)
-      ikSolverRef.current.update()
     }
-  })
+  });
 
   // ---------------------------
   // Step 7: <TransformControls> on the "handleMesh" (a normal mesh in the scene)
@@ -181,6 +231,7 @@ function IKScene({ orbitControlsRef }) {
     if (orbitControlsRef.current) {
       orbitControlsRef.current.enabled = true
     }
+
   }
 
   return (
@@ -195,10 +246,12 @@ function IKScene({ orbitControlsRef }) {
         <TransformControls
           object={handleMeshRef.current}
           mode="translate"
+          space='world'
           ref={transformControlsRef}
           size={0.5}
           onMouseDown={onDragStart}
           onMouseUp={onDragEnd}
+
         />
       )}
     </>
