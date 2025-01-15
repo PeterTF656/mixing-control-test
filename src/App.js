@@ -209,16 +209,16 @@ function IKScene({ orbitControlsRef }) {
               q_list.push(targetBone.quaternion
               )
               v_list.push(targetBone.position)
-              console.log(targetBone)
+              // console.log(targetBone)
             }
             else console.log("\n---\n\nMatching ERROR\n\n")
           }
         })
 
-        console.log({
-          q_list: q_list,
-          v_list: v_list
-        })
+        // console.log({
+        //   q_list: q_list,
+        //   v_list: v_list
+        // })
       }
     }
   });
@@ -264,6 +264,69 @@ function IKScene({ orbitControlsRef }) {
 
 export default function App() {
   const orbitControlsRef = useRef()
+
+  useEffect(() => {
+    if (orbitControlsRef.current) {
+      const controls = orbitControlsRef.current;
+
+      function handleControlsChange() {
+        console.log("fuuuk---------------------------------")
+        const camera = controls.object;
+
+        // Function to convert Three.js position to Blender coordinates
+        function convertPosition(threePos) {
+          return {
+            x: threePos.x,
+            y: threePos.z,
+            z: -threePos.y,
+          };
+        }
+
+        // Function to calculate focal length from fov
+        function calculateFocalLength(fov, sensorHeight = 36) {
+          return (sensorHeight / 2) / Math.tan((fov / 2) * (Math.PI / 180));
+        }
+
+        // Get camera and target positions
+        const threeCameraPos = camera.position;
+        const threeTargetPos = controls.target;
+
+        const blenderCameraPos = convertPosition(threeCameraPos);
+        const blenderTargetPos = convertPosition(threeTargetPos);
+
+        // Calculate direction
+        const direction = new THREE.Vector3()
+          .subVectors(threeTargetPos, threeCameraPos)
+          .normalize();
+
+        // Convert direction to Blender
+        const blenderDirection = {
+          x: direction.x,
+          y: direction.z,
+          z: -direction.y,
+        };
+
+        // Get camera data
+        const fov = camera.fov;
+        const focalLength = calculateFocalLength(fov);
+
+        console.log('Blender Camera Data:');
+        console.log('Position:', blenderCameraPos);
+        console.log('Direction:', blenderDirection);
+        console.log('Focal Length:', focalLength, 'mm');
+        console.log('Near Clip:', camera.near);
+        console.log('Far Clip:', camera.far);
+      }
+
+      controls.addEventListener('change', handleControlsChange);
+
+      // Cleanup
+      return () => {
+        controls.removeEventListener('change', handleControlsChange);
+      };
+    }
+  }, []);
+  
 
   return (
     <Canvas
