@@ -201,14 +201,18 @@ function IKScene({ orbitControlsRef }) {
         const v_list = []
 
         SMPLX_JOINT_NAMES.forEach((bone)=>{
-          const targetIndex = skeleton.bones.findIndex((b) => b.name === bone);
-          const targetBone = skeleton.bones[targetIndex];
-          if (targetBone) {
-            q_list.push(targetBone.quaternion
-            )
-            v_list.push(targetBone.position)
+          if (bone === "left_wrist") {
+            const targetIndex = skeleton.bones.findIndex((b) => b.name === bone);
+            const targetBone = skeleton.bones[targetIndex];
+
+            if (targetBone) {
+              q_list.push(targetBone.quaternion
+              )
+              v_list.push(targetBone.position)
+              console.log(targetBone)
+            }
+            else console.log("\n---\n\nMatching ERROR\n\n")
           }
-          else console.log("\n---\n\nMatching ERROR\n\n")
         })
 
         console.log({
